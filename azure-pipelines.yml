@@ -1,0 +1,79 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  buildConfiguration: 'Release'
+  buildPlatform: 'Any CPU'
+
+stages:
+  - stage: Build
+    displayName: 'Build Stage'
+    jobs:
+      - job: BuildJob
+        displayName: 'Build the Application'
+        steps:
+          - task: UseDotNet@2
+            inputs:
+              packageType: 'sdk'
+              version: '6.x'
+              installationPath: $(Agent.ToolsDirectory)/dotnet
+          - script: dotnet build --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)
+            displayName: 'Build the Solution'
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+  - stage: Test
+    displayName: 'Test Stage'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: TestJob
+        displayName: 'Run Unit Tests'
+        steps:
+          - task: UseDotNet@2
+            inputs:
+              packageType: 'sdk'
+              version: '6.x'
+              installationPath: $(Agent.ToolsDirectory)/dotnet
+          - script: dotnet test --no-build --configuration $(buildConfiguration) --collect:"XPlat Code Coverage"
+            displayName: 'Run Tests'
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFiles: '**/TestResults/*.trx'
+              testRunTitle: 'Unit Tests'
+              publishRunAttachments: true
+
+  - stage: Deploy
+    displayName: 'Deploy to Staging'
+    dependsOn: Test
+    condition: succeeded()
+    jobs:
+      - deployment: DeployJob
+        environment: 'staging'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: drop
+                - task: AzureWebApp@1
+                  inputs:
+                    azureSubscription: '<Your Azure Subscription>'
+                    appName: '<Your App Service Name>'
+                    package: $(System.ArtifactsDirectory)/drop
+                    deploymentMethod: 'runFromPackage'
+
